@@ -7,6 +7,7 @@
 #include "builtins.h"
 #include "utils.h"
 #include "shell.h"
+#include "signals.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -171,6 +172,9 @@ int execute_pipeline(Pipeline *pipeline)
         }
     }
 
+    sigset_t old_mask;
+    signals_block_sigchld(&old_mask);
+
     for (int i = 0; i < num_commands; i++) {
         pid_t pid = fork();
 
@@ -184,6 +188,7 @@ int execute_pipeline(Pipeline *pipeline)
                 waitpid(pids[k], &status, 0);
             }
 
+            signals_unblock_sigchld(&old_mask);
             return -1;
         }
 
@@ -203,10 +208,15 @@ int execute_pipeline(Pipeline *pipeline)
     close_all_pipes(pipefds, num_pipes);
 
     if (pipeline->background) {
+        for (int i = 0; i < num_commands; i++) {
+            signals_register_background_pid(pids[i]);
+        }
+
         printf("[background] pid %d\n", (int)pids[num_commands - 1]);
         fflush(stdout);
 
         /* SIGCHLD handler will clean up later. */
+        signals_unblock_sigchld(&old_mask);
         return SHELL_EXIT_SUCCESS;
     }
 
@@ -231,6 +241,8 @@ int execute_pipeline(Pipeline *pipeline)
             }
         }
     }
+
+    signals_unblock_sigchld(&old_mask);
 
     g_shell_state.last_exit_status = last_status;
     return last_status;
